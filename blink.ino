@@ -57,6 +57,8 @@ const byte mux_code[mux_pins_max] = { B0001,
 SimpleTimer timer;
 
 
+byte    tube_toggle   = 0;
+
 int     digits[mux_pins_max];
 boolean dots[mux_pins_max];
 
@@ -182,21 +184,92 @@ void update_digit_2 ()
 }
 
 
+// Timer 1 interrupt service routine
+
+ISR(TIMER1_COMPA_vect)
+{
+  // Drive tubes at 250 Hz
+  tube_toggle ^= 1;
+  if (tube_toggle) display();
+
+}
+
 
 void setup () 
 {
-//    Serial.begin (9600);
-    
-    
-    for (auto pin : output_pins) {
-        pinMode (pin, OUTPUT);
-    }
-    
     for (auto pin : output_pins) {
         pinMode (pin, OUTPUT);
         digitalWrite (pin, LOW);
     }
 
+    // TCCR1A - Timer/Counter Control Register A: (default 00000000b)
+    // * Bit 7..6: COM1A[1..0]: Compare Match Output A Mode
+    // * Bit 5..4: COM1B[1..0]: Compare Match Output B Mode
+    // * Bit 3..2: Reserved
+    // * Bit 1..0: WGM1[1..0]: Waveform Generation Mode
+    //
+    // TCCR1B - Timer/Counter Control Register B: (default 00000000b)
+    // * Bit    7: ICNC1: Input Capture Noise Canceler
+    // * Bit    6: ICES1: Input Capture Edge Select
+    // * Bit    5: Reserved
+    // * Bit 4..3: WGM1[3..2]: Waveform Generation Mode
+    // * Bit 2..0: CS1[2..0]: Clock Select
+    //
+    // TCCR1C - Timer/Counter Control Register C: (default 00000000b)
+    // * Bit    7: FOC1A: Force Output Compare for Channel A
+    // * Bit    6: FOC1B: Force Output Compare for Channel B
+    // * Bit 5..0: Reserved
+    //
+    // TCNT1H and TCNT1L - Timer/Counter Register: (default 0000000000000000b)
+    // * Bit 15..0: TCNT1[15..0]: timer/counter value
+    //
+    // OCR1AH and OCR1AL - Output Compare Register A: (default 0000000000000000b)
+    // * Bit 15..0: OCR1A[15..0]: compare value A
+    //
+    // OCR1BH and OCR1BL - Output Compare Register B: (default 0000000000000000b)
+    // * Bit 15..0: OCR1B[15..0]: compare value B
+    //
+    // ICR1H and ICR1L - Input Capture Register: (default 0000000000000000b)
+    // * Bit 15..0: ICR1[15..0]: capture value B
+    //
+    // TIMSK1 - Timer/Counter Interrupt Mask Register: (default 00000000b)
+    // * Bit 7..6: Reserved
+    // * Bit    5: ICIE1: Input Capture Interrupt Enable
+    // * Bit 4..3: Reserved
+    // * Bit    2: OCIE1B: Output Compare B Match Interrupt Enable
+    // * Bit    1: OCIE1A: Output Compare A Match Interrupt Enable
+    // * Bit    0: TOIE1: Overflow Interrupt Enable
+    //
+    // TIFR1 - Timer/Counter Interrupt Flag Register: (default 00000000b)
+    // * Bit 7..6: Reserved
+    // * Bit    5: ICF1: Input Capture Flag
+    // * Bit 4..3: Reserved
+    // * Bit    2: OCF1B: Output Compare B Match Flag
+    // * Bit    1: OCF1A: Output Compare A Match Flag
+    // * Bit    0: TOV1: Overflow Flag
+    //
+    // Settings:
+    // - WGM1[3..0]=0100b: CTC (top value OCR1A, overflow on MAX)
+    //   Non-PWM mode:
+    //   - COM1A[1..0]=00b: Normal port operation, OC1A disconnected
+    //   - COM1B[1..0]=00b: Normal port operation, OC1B disconnected
+    // - CS1[2..0]=100b: clk/256 speed => 62500 Hz
+    //                   -> a non-zero value also enables the timer/counter
+    // - OCIE1A=1: Generate interrupt on output compare A match
+
+    cli();
+
+    // We've observed on Arduino IDE 1.5.8 that TCCR1A is non-zero at this point. So let's play safe
+    // and write all relevant timer registers.
+    TCCR1A = 0b00000000;
+    OCR1A  = 125-1;       // 500 Hz (62500/125)
+    TCNT1  = 0;
+    TIMSK1 = 0b00000010;
+    TIFR1  = 0b00000000;
+    TCCR1B = 0b00001100;  // Enable timer
+
+    sei();
+    
     parseTime (&tm, __TIME__);
     
     for (auto & dot : dots) {
@@ -236,20 +309,8 @@ void setup ()
                        });
     
                        
-//    dots[0] = HIGH;
-//    dots[2] = HIGH;
-//    dots[3] = HIGH;
-    
-    //timer.setInterval (1, test_display);
-    
-    timer.setInterval (1, display);
-//    timer.setInterval (1000, update_digit_1);
-//    timer.setInterval (10000, update_digit_2);
+//    timer.setInterval (1, display);
     timer.setInterval (500, blink_dot_generic<2>);
-//    timer.setInterval (500, blink_dot_0);
-//    timer.setInterval (1000, write_run_count);
-    
-    //timer.every (5, 
 }
 
 static int counter=0;
@@ -265,34 +326,20 @@ void displayDigit (uint8_t mux, uint8_t digit, boolean dot)
 {
     byte data = (seven_seg_digits[digit] << 1) | (dot ? 1 : B00000000);
 
-    //data = 0xff;
-
-    // digitalWrite (latch_pin, LOW);
-    // digitalWrite (oe_pin, LOW);
-    // shiftOut (data_pin, clock_pin, LSBFIRST, data);
-    // shiftOut (data_pin, clock_pin, LSBFIRST, mux_code[mux]);
     
     digitalWrite (latch_pin, LOW);
     shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
     shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    //shiftOut (data_pin, clock_pin, LSBFIRST, mux_code[mux]);
     digitalWrite (latch_pin, HIGH);
 
-    //delayMicroseconds(160);
+    // The following function is compiled to one or more nested loops that run for the exact amount
+    // of cycles
+    __builtin_avr_delay_cycles(16*40);  // 40 us (at 16 MHz)
     
     digitalWrite (latch_pin, LOW);
-
     shiftOut (data_pin, clock_pin, LSBFIRST, data);
     shiftOut (data_pin, clock_pin, LSBFIRST, mux_code[mux]);
-
     digitalWrite (latch_pin, HIGH);
-
-    
-    /* for (int i=0; i < segment_max; ++i) { */
-    /*     digitalWrite (output_pins[i], seven_seg_digits[digit][i]); */
-    /* } */
-
-
 }
 
 
