@@ -1,5 +1,5 @@
 BOARD_TAG=nano
-BOARD_SUB=atmega328
+BOARD_SUB=atmega168
 ARDUINO_DIR=/opt/arduino
 
 CXXFLAGS=-std=c++11 -Wall -pedantic
