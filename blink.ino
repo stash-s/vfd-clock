@@ -1,3 +1,7 @@
+#include "StandardCplusplus.h"
+#include <vector>
+#include <functional>
+
 #include <Time.h>
 
 #include "SimpleTimer.h"
@@ -68,9 +72,11 @@ const byte mux_code[mux_pins_max] = { B0001,
 
 //RTCTimer timer;
 
-SimpleTimer timer;
-tmElements_t      tm;
+SimpleTimer      timer;
+std::vector<int> timer_numbers;
 
+
+tmElements_t      tm;
 
 byte    tube_toggle   = 0;
 
@@ -82,21 +88,8 @@ int mux_digit=0;
 
 // timer status
 int current_timer;
+std::vector<int> current_timers;
 
-tmElements_t * parseTime (tmElements_t *tm, char *str) 
-{
-    int hour, minute, sec;
-    
-    if (sscanf (str, "%d:%d:%d", &hour, &minute, &sec)) {
-        tm->Hour   = hour;
-        tm->Minute = minute;
-        tm->Second = sec;
-
-        return tm;
-        
-    }
-    return NULL;
-}
 
 void update_model ()
 {
@@ -125,6 +118,138 @@ void blink_dot (int dot)
     update_model ();
 }
 
+
+template <int the_dot>
+void blink_dot_generic (void) 
+{
+    blink_dot (the_dot);
+}
+
+
+class Display
+{
+protected:
+    SimpleTimer * timer;
+    Display * next;
+    
+    
+public:
+
+    Display (SimpleTimer * timer, Display * next = NULL)
+            : timer (timer),
+              next (next)
+        {}
+    
+    virtual void wire_up ()=0;
+    
+    virtual void unwire  () {
+        for (auto num : timer_numbers) {
+            timer->disable (num);
+        }
+        if (next) {
+            next->wire_up();
+        }
+    }
+};
+
+class ClockDisplay : public Display
+{
+public:
+
+    ClockDisplay (SimpleTimer * timer, Display * next = NULL)
+            : Display (timer, next)
+        {}
+    
+    timer_callback callback () 
+        {
+            return []() {
+                
+                ++ tm.Second;
+                           
+                if (tm.Second >= 60) {
+                    
+                    tm.Second = 0;
+                    ++ tm.Minute;
+                    
+                    if (tm.Minute >= 60) {
+                        
+                        tm.Minute = 0;
+                        ++ tm.Hour;
+                        
+                        if (tm.Hour >= 24) {
+                            
+                            tm.Hour = 0;
+                        }
+                    }
+                }
+                update_time (tm);
+            };
+        }
+    
+    virtual void wire_up () 
+        {
+            timer_numbers.push_back (timer->setInterval (1000, callback()));
+            timer_numbers.push_back (timer->setInterval (500, blink_dot_generic<2>));
+        }
+};
+
+class LoopDisplay : public Display 
+{
+    int counter;    
+    
+public:
+    
+    LoopDisplay (SimpleTimer * timer, Display * next = NULL)
+            : Display (timer, next),
+              counter (6)
+        {}
+
+    timer_callback callback () 
+        {
+            if (counter <= 0) {
+                unwire();
+                next->wire_up ();
+                    
+                return;
+            }
+
+            uint8_t frame = 1 << (counter + 1);
+            for (auto & digit : display_matrix) {
+                digit = frame;
+            }
+            
+            -- counter;
+        }
+    
+    
+    virtual void wire_up () 
+        {
+            auto f = [this]() { callback (); };
+            
+            //timer_numbers.push_back (timer->setInterval (50, (f));
+        }
+            
+};
+    
+
+
+tmElements_t * parseTime (tmElements_t *tm, char *str) 
+{
+    int hour, minute, sec;
+    
+    if (sscanf (str, "%d:%d:%d", &hour, &minute, &sec)) {
+        tm->Hour   = hour;
+        tm->Minute = minute;
+        tm->Second = sec;
+
+        return tm;
+        
+    }
+    return NULL;
+}
+
+
+
 void display () 
 {
     ++mux_digit;
@@ -144,12 +269,6 @@ void display ()
     digitalWrite (latch_pin, HIGH);
 
     digitalWrite (oe_pin, LOW);    
-}
-
-template <int the_dot>
-void blink_dot_generic (void) 
-{
-    blink_dot (the_dot);
 }
 
 
@@ -180,7 +299,7 @@ void setup ()
     for (auto digit : digits) digit=0;
     for (auto digit : display_matrix) digit=0;
     for (auto dot   : dots  ) dot  =0;
-    
+ 
     // TCCR1A - Timer/Counter Control Register A: (default 00000000b)
     // * Bit 7..6: COM1A[1..0]: Compare Match Output A Mode
     // * Bit 5..4: COM1B[1..0]: Compare Match Output B Mode
@@ -253,9 +372,33 @@ void setup ()
     
     parseTime (&tm, __TIME__);
     //timer.setInterval (1, display);
+    
     time_demo();
-    timer.setInterval (1000, time_demo);
-    timer.setInterval (500, blink_dot_generic<2>);
+
+    timer_numbers.push_back (timer.setInterval (1000,  []() {
+                
+                ++ tm.Second;
+                           
+                if (tm.Second >= 60) {
+                    
+                    tm.Second = 0;
+                    ++ tm.Minute;
+                    
+                    if (tm.Minute >= 60) {
+                        
+                        tm.Minute = 0;
+                        ++ tm.Hour;
+                        
+                        if (tm.Hour >= 24) {
+                            
+                            tm.Hour = 0;
+                        }
+                    }
+                }
+                update_time (tm);
+            }));
+    
+    timer_numbers.push_back (timer.setInterval (500, blink_dot_generic<2>));
 }
 
 void loop () 
