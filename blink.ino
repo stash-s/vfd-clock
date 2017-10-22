@@ -192,6 +192,9 @@ ISR(TIMER1_COMPA_vect)
   tube_toggle ^= 1;
   if (tube_toggle) display();
 
+  // Drive tubes at 250 Hz
+  //display();
+
 }
 
 
@@ -199,7 +202,7 @@ void setup ()
 {
     for (auto pin : output_pins) {
         pinMode (pin, OUTPUT);
-        digitalWrite (pin, LOW);
+        //digitalWrite (pin, LOW);
     }
 
     // TCCR1A - Timer/Counter Control Register A: (default 00000000b)
@@ -326,20 +329,23 @@ void displayDigit (uint8_t mux, uint8_t digit, boolean dot)
 {
     byte data = (seven_seg_digits[digit] << 1) | (dot ? 1 : B00000000);
 
+    digitalWrite (oe_pin, HIGH);
     
-    digitalWrite (latch_pin, LOW);
-    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    digitalWrite (latch_pin, HIGH);
+    /* digitalWrite (latch_pin, LOW); */
+    /* shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0); */
+    /* shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0); */
+    /* digitalWrite (latch_pin, HIGH); */
 
     // The following function is compiled to one or more nested loops that run for the exact amount
     // of cycles
-    __builtin_avr_delay_cycles(16*40);  // 40 us (at 16 MHz)
+    __builtin_avr_delay_cycles(16*10);  // 10 us (at 16 MHz)
     
     digitalWrite (latch_pin, LOW);
     shiftOut (data_pin, clock_pin, LSBFIRST, data);
     shiftOut (data_pin, clock_pin, LSBFIRST, mux_code[mux]);
     digitalWrite (latch_pin, HIGH);
+
+    digitalWrite (oe_pin, LOW);    
 }
 
 
