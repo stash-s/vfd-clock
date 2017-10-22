@@ -1,6 +1,8 @@
 #include <Time.h>
 
 #include "SimpleTimer.h"
+#include "model.h"
+
 
 const int data_pin  = 3;
 const int latch_pin = 4;
@@ -67,6 +69,7 @@ const byte mux_code[mux_pins_max] = { B0001,
 //RTCTimer timer;
 
 SimpleTimer timer;
+tmElements_t      tm;
 
 
 byte    tube_toggle   = 0;
@@ -77,7 +80,8 @@ boolean dots  [mux_pins_max];
 
 int mux_digit=0;
 
-tmElements_t      tm;
+// timer status
+int current_timer;
 
 tmElements_t * parseTime (tmElements_t *tm, char *str) 
 {
@@ -132,7 +136,7 @@ void display ()
     
     // The following function is compiled to one or more nested loops that run for the exact amount
     // of cycles
-    __builtin_avr_delay_cycles(16*10);  // 10 us (at 16 MHz)
+    __builtin_avr_delay_cycles(16*250);  // 250 us (at 16 MHz)
     
     digitalWrite (latch_pin, LOW);
     shiftOut (data_pin, clock_pin, LSBFIRST, display_matrix[mux_digit]);
@@ -161,14 +165,22 @@ ISR(TIMER1_COMPA_vect)
 
 }
 
+void demo_all();
+void time_demo();
+
 
 void setup () 
 {
+    digitalWrite(oe_pin, HIGH);
+
     for (auto pin : output_pins) {
         pinMode (pin, OUTPUT);
-        //digitalWrite (pin, LOW);
     }
 
+    for (auto digit : digits) digit=0;
+    for (auto digit : display_matrix) digit=0;
+    for (auto dot   : dots  ) dot  =0;
+    
     // TCCR1A - Timer/Counter Control Register A: (default 00000000b)
     // * Bit 7..6: COM1A[1..0]: Compare Match Output A Mode
     // * Bit 5..4: COM1B[1..0]: Compare Match Output B Mode
@@ -236,41 +248,67 @@ void setup ()
     TCCR1B = 0b00001100;  // Enable timer
 
     sei();
+
+    //timer.setInterval (100, demo_all);
     
     parseTime (&tm, __TIME__);
-    
-    for (auto & dot : dots) {
-        dot = LOW;
-    }
-
-    timer.setInterval (1000,[]() 
-                       {
-                           ++ tm.Second;
-                           
-                           if (tm.Second >= 60) {
-                               
-                               tm.Second = 0;
-                               ++ tm.Minute;
-                               
-                               if (tm.Minute >= 60) {
-                                   
-                                   tm.Minute = 0;
-                                   ++ tm.Hour;
-                                   
-                                   if (tm.Hour >= 24) {
-                                       
-                                       tm.Hour = 0;
-                                   }
-                               }
-                           }
-                           update_time (tm);
-                       });
-                       
-//    timer.setInterval (1, display);
+    //timer.setInterval (1, display);
+    time_demo();
+    timer.setInterval (1000, time_demo);
     timer.setInterval (500, blink_dot_generic<2>);
 }
 
 void loop () 
 {
     timer.run ();    
+}
+
+void demo_circle () 
+{}
+
+
+void demo_all () 
+{
+    static int frame=0;
+    static int countdown=4;
+
+    if (countdown) {
+        -- countdown;
+        for (auto i=0; i < digits_max; ++i) {
+            display_matrix[i] =  (countdown & 1) ? 0b10000000 : 0;
+        }
+        return;
+    }
+                           
+    for (auto i=0; i < digits_max; ++i) {
+        display_matrix[i] = ((uint8_t) 1) << (7-frame);
+    }
+
+    if (++frame >= 8) {
+        frame = 0;
+        countdown=4;
+    }
+}
+
+void time_demo () 
+{                       
+    ++ tm.Second;
+                           
+    if (tm.Second >= 60) {
+                               
+        tm.Second = 0;
+        ++ tm.Minute;
+                               
+        if (tm.Minute >= 60) {
+                                   
+            tm.Minute = 0;
+            ++ tm.Hour;
+                                   
+            if (tm.Hour >= 24) {
+                                       
+                tm.Hour = 0;
+            }
+        }
+    }
+    update_time (tm);
 }
