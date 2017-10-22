@@ -15,11 +15,23 @@ const int output_pins[] = {
 };
 
 const int output_pins_max = sizeof(output_pins) / sizeof(int);
-const int segment_max = 7;
-//const int dot_pin = 7;
 
-//const int mux_pins[] = {8,9,10,11};
-const int mux_pins_max = 4; //sizeof(mux_pins) / sizeof(int);
+/*
+       bit 1
+        ---
+ bit 6 |   | bit 2
+       |   |
+ bit 7  ---
+       |   | bit 3
+ bit 5 |   |
+        --- . bit 8
+       bit 4
+*/
+
+const int digits_max   = 4; // number of digits
+const int mux_pins_max = digits_max; //sizeof(mux_pins) / sizeof(int);
+
+uint8_t display_matrix[digits_max];  // static table of digits
 
 /* const byte seven_seg_digits[10][7] = { { 1,1,1,1,1,1,0 },  // = 0 */
 /*                                        { 0,1,1,0,0,0,0 },  // = 1 */
@@ -33,16 +45,16 @@ const int mux_pins_max = 4; //sizeof(mux_pins) / sizeof(int);
 /*                                        { 1,1,1,0,0,1,1 }   // = 9 */
 /* }; */
 
-const byte seven_seg_digits[10] = { B1111110,  // = 0
-                                    B0110000,  // = 1
-                                    B1101101,  // = 2
-                                    B1111001,  // = 3
-                                    B0110011,  // = 4
-                                    B1011011,  // = 5
-                                    B1011111,  // = 6
-                                    B1110000,  // = 7
-                                    B1111111,  // = 8
-                                    B1111011   // = 9
+const byte seven_seg_digits[10] = { B11111100,  // = 0
+                                    B01100000,  // = 1
+                                    B11011010,  // = 2
+                                    B11110010,  // = 3
+                                    B01100110,  // = 4
+                                    B10110110,  // = 5
+                                    B10111110,  // = 6
+                                    B11100000,  // = 7
+                                    B11111110,  // = 8
+                                    B11110110   // = 9
 };
 
 const byte mux_code[mux_pins_max] = { B0001,
@@ -59,16 +71,13 @@ SimpleTimer timer;
 
 byte    tube_toggle   = 0;
 
-int     digits[mux_pins_max];
-boolean dots[mux_pins_max];
+// the model
+uint8_t digits[mux_pins_max];
+boolean dots  [mux_pins_max];
 
 int mux_digit=0;
-int fade_clock=0;
-int fade_amount=0;
-tmElements_t      tm;
 
-int active_segment=0;
-int active_segment_max=8;
+tmElements_t      tm;
 
 tmElements_t * parseTime (tmElements_t *tm, char *str) 
 {
@@ -85,62 +94,22 @@ tmElements_t * parseTime (tmElements_t *tm, char *str)
     return NULL;
 }
 
-int * update_digits (int digits[mux_pins_max], const tmElements_t & tm)
+void update_model ()
+{
+    for (auto i = 0; i < mux_pins_max; ++i) {
+        display_matrix[i] = seven_seg_digits[digits[i]] | dots[i];
+    }        
+}
+
+void update_time (const tmElements_t & tm)
 {
     digits[0] = (tm.Minute % 10);
     digits[1] = (tm.Minute / 10);
     digits[2] = (tm.Hour   % 10);
-    digits[3] = (tm.Hour   / 10);
+    digits[3] = (tm.Hour   / 10); 
 
-    return digits;
+    update_model ();
 }
-
-
-void displayDigit (uint8_t mux, uint8_t digit, boolean dot);
-
-int run_count;
-
-void display () 
-{
-    ++ run_count;
-    
-    ++mux_digit;
-    if (mux_digit >= mux_pins_max) {
-        mux_digit = 0;
-    }
-
-    displayDigit (mux_digit, digits[mux_digit], dots[mux_digit]);
-}
-
-void test_display ()
-{
-    ++mux_digit;
-    if (mux_digit >= mux_pins_max) {
-        mux_digit = 0;
-    }
-    
-    byte data = 1 << active_segment;
-
-    digitalWrite (latch_pin, LOW);
-    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    digitalWrite (latch_pin, HIGH);
-
-    
-    digitalWrite (latch_pin, LOW);
-    shiftOut (data_pin, clock_pin, LSBFIRST, data);
-    shiftOut (data_pin, clock_pin, LSBFIRST, mux_code[mux_digit]);
-    digitalWrite (latch_pin, HIGH);    
-}
-
-
-    
-void write_run_count () 
-{
-    Serial.println (run_count);
-    run_count = 0;
-}
-
 
 void blink_dot (int dot) 
 {
@@ -149,13 +118,29 @@ void blink_dot (int dot)
     } else {
         dots[dot] = LOW;
     }
+    update_model ();
 }
 
-void blink_dot_0 () 
+void display () 
 {
-    blink_dot(0);
-}
+    ++mux_digit;
+    if (mux_digit >= mux_pins_max) {
+        mux_digit = 0;
+    }
 
+    digitalWrite (oe_pin, HIGH);
+    
+    // The following function is compiled to one or more nested loops that run for the exact amount
+    // of cycles
+    __builtin_avr_delay_cycles(16*10);  // 10 us (at 16 MHz)
+    
+    digitalWrite (latch_pin, LOW);
+    shiftOut (data_pin, clock_pin, LSBFIRST, display_matrix[mux_digit]);
+    shiftOut (data_pin, clock_pin, LSBFIRST, mux_code      [mux_digit]);
+    digitalWrite (latch_pin, HIGH);
+
+    digitalWrite (oe_pin, LOW);    
+}
 
 template <int the_dot>
 void blink_dot_generic (void) 
@@ -164,28 +149,7 @@ void blink_dot_generic (void)
 }
 
 
-
-void update_digit_1 () 
-{
-    ++ (digits[1]);
-    if (digits[1] >= 10) {
-        digits[1] = 0;
-    }
-    
-}
-
-void update_digit_2 () 
-{
-    ++ (digits[0]);
-    if (digits[0] >= 10) {
-        digits[0] = 0;
-    }
-    
-}
-
-
 // Timer 1 interrupt service routine
-
 ISR(TIMER1_COMPA_vect)
 {
   // Drive tubes at 250 Hz
@@ -299,67 +263,14 @@ void setup ()
                                    }
                                }
                            }
-                           update_digits (digits, tm);
+                           update_time (tm);
                        });
-    
-
-    timer.setInterval (1000,[]()
-                       {
-                           ++active_segment;
-                           if (active_segment >= active_segment_max) {
-                               active_segment= 0;
-                           }
-                       });
-    
                        
 //    timer.setInterval (1, display);
     timer.setInterval (500, blink_dot_generic<2>);
 }
 
-static int counter=0;
-
-
-void shift_out (byte data)
-{
-    byte reg = PORTD;
-    
-}
-
-void displayDigit (uint8_t mux, uint8_t digit, boolean dot) 
-{
-    byte data = (seven_seg_digits[digit] << 1) | (dot ? 1 : B00000000);
-
-    digitalWrite (oe_pin, HIGH);
-    
-    /* digitalWrite (latch_pin, LOW); */
-    /* shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0); */
-    /* shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0); */
-    /* digitalWrite (latch_pin, HIGH); */
-
-    // The following function is compiled to one or more nested loops that run for the exact amount
-    // of cycles
-    __builtin_avr_delay_cycles(16*10);  // 10 us (at 16 MHz)
-    
-    digitalWrite (latch_pin, LOW);
-    shiftOut (data_pin, clock_pin, LSBFIRST, data);
-    shiftOut (data_pin, clock_pin, LSBFIRST, mux_code[mux]);
-    digitalWrite (latch_pin, HIGH);
-
-    digitalWrite (oe_pin, LOW);    
-}
-
-
 void loop () 
 {
-    /*  for (int i=0; i < output_pins_max; ++i) {
-        if (counter == i) {
-            digitalWrite (output_pins[i], HIGH);
-        } else {
-            digitalWrite (output_pins[i], LOW);
-        }
-        }*/
-
-//    while (true)
-    timer.run ();
-    
+    timer.run ();    
 }
