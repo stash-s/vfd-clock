@@ -78,8 +78,6 @@ std::vector<int> timer_numbers;
 
 tmElements_t      tm;
 
-byte    tube_toggle   = 0;
-
 // the model
 uint8_t digits[mux_pins_max];
 boolean dots  [mux_pins_max];
@@ -272,48 +270,11 @@ void display_sweep ()
 // Timer 1 interrupt service routine
 ISR(TIMER1_COMPA_vect)
 {
-  // Drive tubes at 250 Hz
-  tube_toggle ^= 1;
-  if (tube_toggle) ; //display_sweep();
 
   // Drive tubes at 500 Hz
   display_sweep();
 
 }
-
-void time_demo();
-
-
-void submit_loop () 
-{
-    for (auto number : timer_numbers) {
-        timer.disable (number);
-    }
-
-    static int loop_timer;
-
-    loop_timer = timer.setInterval (100, []() 
-                                    {
-                                        static int counter =6;
-                                        
-                                        if (counter <= 0) {
-                                            timer.deleteTimer (loop_timer);
-                                            for (auto number: timer_numbers) {
-                                                timer.enable (number);
-                                            }
-                                            counter=6;
-                                            
-                                        } else {
-                                            for (auto & digit : display_matrix) {
-                                                digit = (1 << (counter+1));
-                                            }
-                                            -- counter;
-                                        }
-                                    }
-                                    );    
-}
-
-
 
 void setup () 
 {
@@ -394,13 +355,10 @@ void setup ()
     TCCR1B = 0b00001100;  // Enable timer
 
     sei();
-
-    //timer.setInterval (100, demo_all);
     
     parseTime (&tm, __TIME__);
-    //timer.setInterval (1, display);
     
-    time_demo();
+    update_time (tm);
 
     timer_numbers.push_back (timer.setInterval (1000,  []() {
                 
@@ -412,7 +370,6 @@ void setup ()
                     ++ tm.Minute;
 
                     start_circle();
-
                     
                     if (tm.Minute >= 60) {
                         
@@ -436,55 +393,6 @@ void loop ()
     timer.run ();    
 }
 
-void demo_circle () 
-{}
-
-
-void demo_all () 
-{
-    static int frame=0;
-    static int countdown=4;
-
-    if (countdown) {
-        -- countdown;
-        for (auto i=0; i < digits_max; ++i) {
-            display_matrix[i] =  (countdown & 1) ? 0b10000000 : 0;
-        }
-        return;
-    }
-                           
-    for (auto i=0; i < digits_max; ++i) {
-        display_matrix[i] = ((uint8_t) 1) << (7-frame);
-    }
-
-    if (++frame >= 8) {
-        frame = 0;
-        countdown=4;
-    }
-}
-
-void time_demo () 
-{                       
-    ++ tm.Second;
-                           
-    if (tm.Second >= 60) {
-                               
-        tm.Second = 0;
-        ++ tm.Minute;
-                               
-        if (tm.Minute >= 60) {
-                                   
-            tm.Minute = 0;
-            ++ tm.Hour;
-                                   
-            if (tm.Hour >= 24) {
-                                       
-                tm.Hour = 0;
-            }
-        }
-    }
-    update_time (tm);
-}
 
 // Local Variables:
 // mode: c++
