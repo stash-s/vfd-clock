@@ -88,13 +88,86 @@ boolean dots  [mux_pins_max];
 int current_timer;
 std::vector<int> current_timers;
 
+/**
+ * utility function to cycle thru range <0, max)
+ */
+template <int max>
+class rotary_counter
+{
+    int counter=0;
+    
+  public:
+    
+    inline int operator()()
+    {        
+        const int v = counter;
 
-void update_model ()
+        ++ counter;
+        
+        if (counter >=max) {
+            counter = 0;
+        }
+        
+        return v;
+    }
+
+    inline operator int () const 
+    {
+        return counter;
+    }
+    
+};
+
+
+void display_digits();
+void display_circle();
+
+timer_callback display_callback = display_digits;
+
+/**
+ * Display digits callback function.
+ */
+void display_digits ()
 {
     for (auto i = 0; i < mux_pins_max; ++i) {
         display_matrix[i] = seven_seg_digits[digits[i]] | dots[i];
     }        
 }
+
+/**
+ * Display circle animation
+ */
+int circle_counter;
+int circle_timer;
+
+void display_circle () 
+{
+    byte frame = circle_counter & 7;
+    
+    for (auto i = 0; i < mux_pins_max; ++i) {
+        display_matrix[i] = (1 << (frame + 1)) | dots[i];
+    }        
+}
+
+void start_circle () 
+{
+    display_callback = display_circle;
+    circle_counter = 7;
+
+    circle_timer = timer.setInterval (100, []()
+                                      {
+                                          if (circle_counter <= 0) {
+                                              // end loop
+                                              timer.deleteTimer (circle_timer);
+                                              display_callback = display_digits;
+                                          }
+                                          -- circle_counter;
+                                          display_callback();
+                                      });
+}
+
+    
+
 
 void update_time (const tmElements_t & tm)
 {
@@ -103,7 +176,7 @@ void update_time (const tmElements_t & tm)
     digits[2] = (tm.Hour   % 10);
     digits[3] = (tm.Hour   / 10); 
 
-    update_model ();
+    display_callback ();
 }
 
 void blink_dot (int dot) 
@@ -113,7 +186,7 @@ void blink_dot (int dot)
     } else {
         dots[dot] = LOW;
     }
-    update_model ();
+    display_callback ();
 }
 
 
@@ -138,34 +211,38 @@ tmElements_t * parseTime (tmElements_t *tm, const char *str)
     return NULL;
 }
 
+
+
 /**
- * utility function to cycle thru range <0, max)
+ *
  */
-template <int max>
-class rotary_counter
+template <typename callback>
+class countdown_timer
 {
-    int counter=0;
-    
+    int counter;
+    callback step_callback;
+    callback end_callback;
+
   public:
-    
-    inline int operator()()
-    {
-        const int v = counter;
+    countdown_timer (int max, callback step_callback, callback end_callback)
+        :counter (max),
+         step_callback (step_callback),
+         end_callback (end_callback)
+        {}
 
-        if (++ counter >= max) {
-            counter = 0;
-        }
-        return v;
-    }
-
-    inline operator int () const 
+    void operator()() 
     {
-        return counter;
+            if ( counter <= 0 ) {
+                end_callback ();
+            } else {
+                step_callback ();
+                -- counter;
+            }
     }
     
 };
 
-    
+
 
 /**
  * Continuousle sweep display_matrix table
@@ -204,7 +281,6 @@ ISR(TIMER1_COMPA_vect)
 
 }
 
-void demo_all();
 void time_demo();
 
 
@@ -236,6 +312,7 @@ void submit_loop ()
                                     }
                                     );    
 }
+
 
 
 void setup () 
@@ -334,7 +411,7 @@ void setup ()
                     tm.Second = 0;
                     ++ tm.Minute;
 
-                    //submit_loop ();
+                    start_circle();
 
                     
                     if (tm.Minute >= 60) {
@@ -352,9 +429,6 @@ void setup ()
             }));
     
     timer_numbers.push_back (timer.setInterval (500, blink_dot_generic<2>));
-
-    //timer_numbers.push_back (timer.setInterval (5000, submit_loop));
-     
 }
 
 void loop () 
@@ -411,3 +485,7 @@ void time_demo ()
     }
     update_time (tm);
 }
+
+// Local Variables:
+// mode: c++
+// End:
