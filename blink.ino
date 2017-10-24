@@ -84,8 +84,6 @@ byte    tube_toggle   = 0;
 uint8_t digits[mux_pins_max];
 boolean dots  [mux_pins_max];
 
-int mux_digit=0;
-
 // timer status
 int current_timer;
 std::vector<int> current_timers;
@@ -125,115 +123,7 @@ void blink_dot_generic (void)
     blink_dot (the_dot);
 }
 
-
-class Display
-{
-protected:
-    SimpleTimer * timer;
-    Display * next;
-    
-    
-public:
-
-    Display (SimpleTimer * timer, Display * next = NULL)
-            : timer (timer),
-              next (next)
-        {}
-    
-    virtual void wire_up ()=0;
-    
-    virtual void unwire  () {
-        for (auto num : timer_numbers) {
-            timer->disable (num);
-        }
-        if (next) {
-            next->wire_up();
-        }
-    }
-};
-
-class ClockDisplay : public Display
-{
-public:
-
-    ClockDisplay (SimpleTimer * timer, Display * next = NULL)
-            : Display (timer, next)
-        {}
-    
-    timer_callback callback () 
-        {
-            return []() {
-                
-                ++ tm.Second;
-                           
-                if (tm.Second >= 60) {
-                    
-                    tm.Second = 0;
-                    ++ tm.Minute;
-                    
-                    if (tm.Minute >= 60) {
-                        
-                        tm.Minute = 0;
-                        ++ tm.Hour;
-                        
-                        if (tm.Hour >= 24) {
-                            
-                            tm.Hour = 0;
-                        }
-                    }
-                }
-                update_time (tm);
-            };
-        }
-    
-    virtual void wire_up () 
-        {
-            timer_numbers.push_back (timer->setInterval (1000, callback()));
-            timer_numbers.push_back (timer->setInterval (500, blink_dot_generic<2>));
-        }
-};
-
-class LoopDisplay : public Display 
-{
-    int counter;    
-    
-public:
-    
-    LoopDisplay (SimpleTimer * timer, Display * next = NULL)
-            : Display (timer, next),
-              counter (6)
-        {}
-
-    timer_callback callback () 
-        {
-            if (counter <= 0) {
-                unwire();
-                next->wire_up ();
-                    
-                return;
-            }
-
-            uint8_t frame = 1 << (counter + 1);
-            for (auto & digit : display_matrix) {
-                digit = frame;
-            }
-            
-            -- counter;
-        }
-    
-    
-    virtual void wire_up () 
-        {
-            auto f = [this]() { callback (); };
-            
-            //timer_numbers.push_back (timer->setInterval (50, (f));
-        }
-            
-};
-    
-
-
-tmElements_t * parseTime (tmElements_t *tm, char *str) 
+tmElements_t * parseTime (tmElements_t *tm, const char *str) 
 {
     int hour, minute, sec;
     
@@ -248,27 +138,57 @@ tmElements_t * parseTime (tmElements_t *tm, char *str)
     return NULL;
 }
 
-
-
-void display () 
+/**
+ * utility function to cycle thru range <0, max)
+ */
+template <int max>
+class rotary_counter
 {
-    ++mux_digit;
-    if (mux_digit >= mux_pins_max) {
-        mux_digit = 0;
+    int counter=0;
+    
+  public:
+    
+    inline int operator()()
+    {
+        const int v = counter;
+
+        if (++ counter >= max) {
+            counter = 0;
+        }
+        return v;
     }
 
+    inline operator int () const 
+    {
+        return counter;
+    }
+    
+};
+
+    
+
+/**
+ * Continuousle sweep display_matrix table
+ * and display active digit
+ */
+void display_sweep () 
+{
+    static rotary_counter<mux_pins_max> mux_digit;
+    
     digitalWrite (oe_pin, HIGH);
     
     // The following function is compiled to one or more nested loops that run for the exact amount
     // of cycles
-    __builtin_avr_delay_cycles(16*250);  // 250 us (at 16 MHz)
+    __builtin_avr_delay_cycles(16*500);  // 500 us (at 16 MHz)
     
     digitalWrite (latch_pin, LOW);
     shiftOut (data_pin, clock_pin, LSBFIRST, display_matrix[mux_digit]);
     shiftOut (data_pin, clock_pin, LSBFIRST, mux_code      [mux_digit]);
     digitalWrite (latch_pin, HIGH);
 
-    digitalWrite (oe_pin, LOW);    
+    digitalWrite (oe_pin, LOW);
+
+    mux_digit();
 }
 
 
@@ -277,15 +197,45 @@ ISR(TIMER1_COMPA_vect)
 {
   // Drive tubes at 250 Hz
   tube_toggle ^= 1;
-  if (tube_toggle) display();
+  if (tube_toggle) ; //display_sweep();
 
-  // Drive tubes at 250 Hz
-  //display();
+  // Drive tubes at 500 Hz
+  display_sweep();
 
 }
 
 void demo_all();
 void time_demo();
+
+
+void submit_loop () 
+{
+    for (auto number : timer_numbers) {
+        timer.disable (number);
+    }
+
+    static int loop_timer;
+
+    loop_timer = timer.setInterval (100, []() 
+                                    {
+                                        static int counter =6;
+                                        
+                                        if (counter <= 0) {
+                                            timer.deleteTimer (loop_timer);
+                                            for (auto number: timer_numbers) {
+                                                timer.enable (number);
+                                            }
+                                            counter=6;
+                                            
+                                        } else {
+                                            for (auto & digit : display_matrix) {
+                                                digit = (1 << (counter+1));
+                                            }
+                                            -- counter;
+                                        }
+                                    }
+                                    );    
+}
 
 
 void setup () 
@@ -296,9 +246,9 @@ void setup ()
         pinMode (pin, OUTPUT);
     }
 
-    for (auto digit : digits) digit=0;
-    for (auto digit : display_matrix) digit=0;
-    for (auto dot   : dots  ) dot  =0;
+    for (auto & digit : digits) digit=0;
+    for (auto & digit : display_matrix) digit=0;
+    for (auto & dot   : dots  ) dot  =0;
  
     // TCCR1A - Timer/Counter Control Register A: (default 00000000b)
     // * Bit 7..6: COM1A[1..0]: Compare Match Output A Mode
@@ -383,6 +333,9 @@ void setup ()
                     
                     tm.Second = 0;
                     ++ tm.Minute;
+
+                    //submit_loop ();
+
                     
                     if (tm.Minute >= 60) {
                         
@@ -399,6 +352,9 @@ void setup ()
             }));
     
     timer_numbers.push_back (timer.setInterval (500, blink_dot_generic<2>));
+
+    //timer_numbers.push_back (timer.setInterval (5000, submit_loop));
+     
 }
 
 void loop () 
