@@ -5,8 +5,11 @@
 #include <Time.h>
 
 #include "SimpleTimer.h"
-#include "model.h"
 
+#include <Wire.h>
+#include "RTClib.h"
+
+RTC_DS1307 rtc;
 
 const int data_pin  = 3;
 const int latch_pin = 4;
@@ -69,8 +72,6 @@ const byte mux_code[mux_pins_max] = { B0001,
                                       B1000
 };
 
-
-//RTCTimer timer;
 
 SimpleTimer      timer;
 std::vector<int> timer_numbers;
@@ -164,7 +165,17 @@ void start_circle ()
                                       });
 }
 
-    
+/**
+ * error display
+ */
+void display_error ()
+{
+    display_matrix[3] = 0b00000000;
+    display_matrix[2] = 0b10011110;
+    display_matrix[1] = 0b00001010;
+    display_matrix[0] = 0b00001010;
+}
+
 
 
 void update_time (const tmElements_t & tm)
@@ -209,6 +220,14 @@ tmElements_t * parseTime (tmElements_t *tm, const char *str)
     return NULL;
 }
 
+void get_rtc_time () 
+{
+    DateTime now = rtc.now();
+
+    tm.Hour   = now.hour();
+    tm.Minute = now.minute();
+    tm.Second = now.second();
+}
 
 
 /**
@@ -270,10 +289,8 @@ void display_sweep ()
 // Timer 1 interrupt service routine
 ISR(TIMER1_COMPA_vect)
 {
-
   // Drive tubes at 500 Hz
   display_sweep();
-
 }
 
 void setup () 
@@ -356,9 +373,9 @@ void setup ()
 
     sei();
     
-    parseTime (&tm, __TIME__);
+    //parseTime (&tm, __TIME__);
     
-    update_time (tm);
+    //update_time (tm);
 
     timer_numbers.push_back (timer.setInterval (1000,  []() {
                 
@@ -386,6 +403,27 @@ void setup ()
             }));
     
     timer_numbers.push_back (timer.setInterval (500, blink_dot_generic<2>));
+    
+    if (! rtc.begin()) {
+        display_callback = display_error;
+    }
+
+    if (! rtc.isrunning()) {
+        display_callback = display_error;
+        //Serial.println("RTC is NOT running!");
+    }
+
+    // following line sets the RTC to the date & time this sketch was compiled
+    //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    // This line sets the RTC with an explicit date & time, for example to set
+    // January 21, 2014 at 3am you would call:
+    // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
+    
+    timer_numbers.push_back (timer.setInterval (5000, get_rtc_time));
+    
+    get_rtc_time ();
+    
+    display_callback();
 }
 
 void loop () 

@@ -2,6 +2,6 @@ BOARD_TAG=nano
 BOARD_SUB=atmega168
 ARDUINO_DIR=/opt/arduino
 
-CXXFLAGS=-std=c++11 -Wall -pedantic
+CXXFLAGS= -Wall -pedantic
 
 include /usr/share/arduino/Arduino.mk
