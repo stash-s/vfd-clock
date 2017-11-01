@@ -15,12 +15,14 @@ const int data_pin  = 3;
 const int latch_pin = 4;
 const int clock_pin = 5;
 const int oe_pin    = 6;
+const int filament_pwm_pin = 10;
 
 const int output_pins[] = {
     data_pin,
     latch_pin,
     clock_pin,
-    oe_pin
+    oe_pin,
+    filament_pwm_pin
 };
 
 const int output_pins_max = sizeof(output_pins) / sizeof(int);
@@ -66,10 +68,10 @@ const byte seven_seg_digits[10] = { B11111100,  // = 0
                                     B11110110   // = 9
 };
 
-const byte mux_code[mux_pins_max] = { B0001,
-                                      B0010,
-                                      B0100,
-                                      B1000
+const byte mux_code[mux_pins_max] = { B10001,
+                                      B10010,
+                                      B10100,
+                                      B11000
 };
 
 
@@ -295,11 +297,12 @@ ISR(TIMER1_COMPA_vect)
 
 void setup () 
 {
-    digitalWrite(oe_pin, HIGH);
 
     for (auto pin : output_pins) {
         pinMode (pin, OUTPUT);
     }
+    //digitalWrite(filament_pwm_pin, LOW);
+    digitalWrite(oe_pin, HIGH);
 
     for (auto & digit : digits) digit=0;
     for (auto & digit : display_matrix) digit=0;
@@ -424,6 +427,9 @@ void setup ()
     get_rtc_time ();
     
     display_callback();
+
+    digitalWrite(filament_pwm_pin, HIGH);
+    //analogWrite(filament_pwm_pin, 256);
 }
 
 void loop () 
@@ -433,5 +439,5 @@ void loop ()
 
 
 // Local Variables:
-// mode: c++
+// mode: arduino
 // End:
