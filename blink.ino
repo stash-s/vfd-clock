@@ -271,28 +271,47 @@ void display_sweep ()
 {
     static rotary_counter<mux_pins_max> mux_digit;
     
-    digitalWrite (oe_pin, HIGH);
-    
+    //digitalWrite (oe_pin, HIGH);
+
     // The following function is compiled to one or more nested loops that run for the exact amount
     // of cycles
-    __builtin_avr_delay_cycles(16*500);  // 500 us (at 16 MHz)
+    //__builtin_avr_delay_cycles(16*40);  // 500 us (at 16 MHz)
     
     digitalWrite (latch_pin, LOW);
     shiftOut (data_pin, clock_pin, LSBFIRST, display_matrix[mux_digit]);
     shiftOut (data_pin, clock_pin, LSBFIRST, mux_code      [mux_digit]);
     digitalWrite (latch_pin, HIGH);
 
-    digitalWrite (oe_pin, LOW);
+    //digitalWrite (oe_pin, LOW);
 
     mux_digit();
 }
 
+void blank_display ()
+{
+    digitalWrite (latch_pin, LOW);
+    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
+    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
+    digitalWrite (latch_pin, HIGH);
+}
+
+
+
+rotary_counter<9> sweep_counter;
+int pwm_value=8;
 
 // Timer 1 interrupt service routine
 ISR(TIMER1_COMPA_vect)
-{
-  // Drive tubes at 500 Hz
-  display_sweep();
+{    
+    // Drive tubes at 500 Hz
+    //if (! sweep_counter())
+    int slot = sweep_counter();
+    
+    if (slot == 0) {
+        display_sweep();
+    } else if (slot >= pwm_value) {
+        blank_display();//digitalWrite (oe_pin, HIGH);
+    }
 }
 
 void setup () 
@@ -302,7 +321,7 @@ void setup ()
         pinMode (pin, OUTPUT);
     }
     //digitalWrite(filament_pwm_pin, LOW);
-    digitalWrite(oe_pin, HIGH);
+    digitalWrite(oe_pin, LOW);
 
     for (auto & digit : digits) digit=0;
     for (auto & digit : display_matrix) digit=0;
@@ -368,7 +387,7 @@ void setup ()
     // We've observed on Arduino IDE 1.5.8 that TCCR1A is non-zero at this point. So let's play safe
     // and write all relevant timer registers.
     TCCR1A = 0b00000000;
-    OCR1A  = 125-1;       // 500 Hz (62500/125)
+    OCR1A  = 5-1;       // 2500 Hz (62500/25)
     TCNT1  = 0;
     TIMSK1 = 0b00000010;
     TIFR1  = 0b00000000;
@@ -406,6 +425,14 @@ void setup ()
             }));
     
     timer_numbers.push_back (timer.setInterval (500, blink_dot_generic<2>));
+
+
+    //timer.setInterval (1000, []() 
+    //                   {
+    //                       static rotary_counter<3> counter;
+    //                       pwm_value = counter () + 1;
+    //                   }                   );
+    
     
     if (! rtc.begin()) {
         display_callback = display_error;
@@ -417,7 +444,7 @@ void setup ()
     }
 
     // following line sets the RTC to the date & time this sketch was compiled
-    //rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     // This line sets the RTC with an explicit date & time, for example to set
     // January 21, 2014 at 3am you would call:
     // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
@@ -427,9 +454,6 @@ void setup ()
     get_rtc_time ();
     
     display_callback();
-
-    digitalWrite(filament_pwm_pin, HIGH);
-    //analogWrite(filament_pwm_pin, 256);
 }
 
 void loop () 
