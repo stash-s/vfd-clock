@@ -6,16 +6,17 @@
 
 #include "SimpleTimer.h"
 
+#include <SPI.h>
 #include <Wire.h>
 #include "RTClib.h"
 
 RTC_DS1307 rtc;
 
-const int data_pin  = 3;
-const int latch_pin = 4;
-const int clock_pin = 5;
+const int data_pin  = 11;
+const int latch_pin = 10;
+const int clock_pin = 13;
 const int oe_pin    = 6;
-const int filament_pwm_pin = 10;
+const int filament_pwm_pin = 7;
 
 const int output_pins[] = {
     data_pin,
@@ -249,7 +250,7 @@ class countdown_timer
          end_callback (end_callback)
         {}
 
-    void operator()() 
+    inline void operator()() 
     {
             if ( counter <= 0 ) {
                 end_callback ();
@@ -261,57 +262,75 @@ class countdown_timer
     
 };
 
+inline void latch_low()
+{
+    PORTB &= ~ (1 << PB2);
+}
 
+inline void latch_high()
+{
+    PORTB |= (1 << PB2);
+}
+
+
+const SPISettings spi_settings (20000000, LSBFIRST, SPI_MODE0);
 
 /**
  * Continuousle sweep display_matrix table
  * and display active digit
  */
-void display_sweep () 
+inline void display_sweep () 
 {
-    static rotary_counter<mux_pins_max> mux_digit;
-    
-    //digitalWrite (oe_pin, HIGH);
+    static rotary_counter<mux_pins_max> mux_digit;    
 
-    // The following function is compiled to one or more nested loops that run for the exact amount
-    // of cycles
-    //__builtin_avr_delay_cycles(16*40);  // 500 us (at 16 MHz)
+    latch_low();
+    SPI.beginTransaction(spi_settings);
+    SPI.transfer (display_matrix[mux_digit]);
+    SPI.transfer (mux_code      [mux_digit]);
+    SPI.endTransaction();
+    latch_high();
     
-    digitalWrite (latch_pin, LOW);
-    shiftOut (data_pin, clock_pin, LSBFIRST, display_matrix[mux_digit]);
-    shiftOut (data_pin, clock_pin, LSBFIRST, mux_code      [mux_digit]);
-    digitalWrite (latch_pin, HIGH);
-
-    //digitalWrite (oe_pin, LOW);
 
     mux_digit();
 }
 
-void blank_display ()
+inline void blank_display ()
 {
-    digitalWrite (latch_pin, LOW);
-    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    shiftOut (data_pin, clock_pin, LSBFIRST, (byte) 0);
-    digitalWrite (latch_pin, HIGH);
+    latch_low();
+    SPI.beginTransaction(spi_settings);
+    SPI.transfer (0);
+    SPI.transfer (0);    
+    SPI.endTransaction();
+    latch_high();
 }
 
 
 
-rotary_counter<9> sweep_counter;
-int pwm_value=8;
+rotary_counter<16> sweep_counter;
+rotary_counter<1> filament_counter;
+int pwm_value=15;
+
+int filament=0;
 
 // Timer 1 interrupt service routine
 ISR(TIMER1_COMPA_vect)
-{    
-    // Drive tubes at 500 Hz
-    //if (! sweep_counter())
+{
     int slot = sweep_counter();
-    
+
     if (slot == 0) {
         display_sweep();
-    } else if (slot >= pwm_value) {
-        blank_display();//digitalWrite (oe_pin, HIGH);
+    } else if (slot == pwm_value) {
+        blank_display();
     }
+
+    if ( ! filament_counter() ) {    
+        filament = ! filament;
+        if (filament) {
+            PORTD |= (1 << filament_pwm_pin);
+        } else {
+            PORTD &= ~ (1 << filament_pwm_pin);
+        }
+    }    
 }
 
 void setup () 
@@ -320,7 +339,7 @@ void setup ()
     for (auto pin : output_pins) {
         pinMode (pin, OUTPUT);
     }
-    //digitalWrite(filament_pwm_pin, LOW);
+    digitalWrite(filament_pwm_pin, LOW);
     digitalWrite(oe_pin, LOW);
 
     for (auto & digit : digits) digit=0;
@@ -387,13 +406,15 @@ void setup ()
     // We've observed on Arduino IDE 1.5.8 that TCCR1A is non-zero at this point. So let's play safe
     // and write all relevant timer registers.
     TCCR1A = 0b00000000;
-    OCR1A  = 5-1;       // 2500 Hz (62500/25)
+    OCR1A  = 10-1;       // 6250 Hz (62500/10)
     TCNT1  = 0;
     TIMSK1 = 0b00000010;
     TIFR1  = 0b00000000;
     TCCR1B = 0b00001100;  // Enable timer
 
     sei();
+
+    SPI.begin();
     
     //parseTime (&tm, __TIME__);
     
@@ -444,7 +465,7 @@ void setup ()
     }
 
     // following line sets the RTC to the date & time this sketch was compiled
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
     // This line sets the RTC with an explicit date & time, for example to set
     // January 21, 2014 at 3am you would call:
     // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
