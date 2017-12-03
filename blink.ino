@@ -92,7 +92,7 @@ std::vector<int> current_timers;
 
 /**
  * utility function to cycle thru range <0, max)
- */
+ *
 template <int max>
 class rotary_counter
 {
@@ -117,9 +117,8 @@ class rotary_counter
     {
         return counter;
     }
-    
 };
-
+*/
 
 void display_digits();
 void display_circle();
@@ -230,37 +229,51 @@ void get_rtc_time ()
     tm.Hour   = now.hour();
     tm.Minute = now.minute();
     tm.Second = now.second();
+
+    return tm;
 }
 
-
 /**
- *
+ * Utility class. Rotate through available numbers and trigger actions when ticking and reseting
  */
-template <typename callback>
-class countdown_timer
+template <typename reset_callback_type, typename tick_callback_type>
+class rotary_counter 
 {
-    int counter;
-    callback step_callback;
-    callback end_callback;
+    const int max;
+    int counter=0;
+    const reset_callback_type reset_callback;
+    const tick_callback_type tick_callback;
 
-  public:
-    countdown_timer (int max, callback step_callback, callback end_callback)
-        :counter (max),
-         step_callback (step_callback),
-         end_callback (end_callback)
+public:
+
+    rotary_counter(int max, reset_callback_type reset_callback, tick_callback_type tick_callback)
+    :max (max),
+     reset_callback (reset_callback),
+     tick_callback (tick_callback)
         {}
-
-    inline void operator()() 
-    {
-            if ( counter <= 0 ) {
-                end_callback ();
-            } else {
-                step_callback ();
-                -- counter;
-            }
-    }
     
+    
+    inline int next ()
+        {
+            
+            if (counter == max) {
+                reset_callback (counter);
+                counter = 0;
+            } else {
+                tick_callback (counter);
+                ++counter;
+            }
+            
+            return counter;
+        }            
 };
+
+template <typename t, typename q>
+inline rotary_counter<t,q> make_rotary_counter (int max, t callback, q tick) 
+{
+    return rotary_counter<t,q>(max, callback, tick);
+}
+
 
 inline void latch_low()
 {
@@ -281,17 +294,20 @@ const SPISettings spi_settings (20000000, LSBFIRST, SPI_MODE0);
  */
 inline void display_sweep () 
 {
-    static rotary_counter<mux_pins_max> mux_digit;    
-
-    latch_low();
-    SPI.beginTransaction(spi_settings);
-    SPI.transfer (display_matrix[mux_digit]);
-    SPI.transfer (mux_code      [mux_digit]);
-    SPI.endTransaction();
-    latch_high();
+    static auto mux = make_rotary_counter (mux_pins_max, [](int){},
+                                                      [](int mux_digit) 
+                                                      {
+                                                          latch_low();
+                                                          SPI.beginTransaction(spi_settings);
+                                                          SPI.transfer (display_matrix[mux_digit]);
+                                                          SPI.transfer (mux_code      [mux_digit]);
+                                                          SPI.endTransaction();
+                                                          latch_high();
+                                                      });
+    
     
 
-    mux_digit();
+    mux.next();
 }
 
 inline void blank_display ()
@@ -304,33 +320,35 @@ inline void blank_display ()
     latch_high();
 }
 
+const int pwm_value=15;
 
+auto filament_counter = make_rotary_counter (1,[](int)
+                                             {
+                                                 PORTD |= (1 << filament_pwm_pin);
+                                             },
+                                             [](int) {
+                                                 PORTD &= ~ (1 << filament_pwm_pin);
+                                             });
+                                             
+auto sweep_counter = make_rotary_counter(16, [](int) 
+                                         {
+                                             display_sweep();
+                                         },
+                                         [](int slot)
+                                         {
+                                             if (slot == pwm_value) {
+                                                 blank_display();
+                                             }
+                                         });
 
-rotary_counter<16> sweep_counter;
-rotary_counter<1> filament_counter;
-int pwm_value=15;
+                                         
 
-int filament=0;
 
 // Timer 1 interrupt service routine
 ISR(TIMER1_COMPA_vect)
 {
-    int slot = sweep_counter();
-
-    if (slot == 0) {
-        display_sweep();
-    } else if (slot == pwm_value) {
-        blank_display();
-    }
-
-    if ( ! filament_counter() ) {    
-        filament = ! filament;
-        if (filament) {
-            PORTD |= (1 << filament_pwm_pin);
-        } else {
-            PORTD &= ~ (1 << filament_pwm_pin);
-        }
-    }    
+    sweep_counter.next();
+    filament_counter.next();
 }
 
 void setup () 
@@ -473,6 +491,7 @@ void setup ()
     timer_numbers.push_back (timer.setInterval (5000, get_rtc_time));
     
     get_rtc_time ();
+    update_time (tm);
     
     display_callback();
 }
